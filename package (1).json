@@ -1,0 +1,16 @@
+{
+  "name": "lexora-postback-server",
+  "version": "1.0.0",
+  "description": "Serveur qui reçoit les postbacks du casino et les expose à Lexora Dash",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
