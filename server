@@ -53,16 +53,19 @@ function bump(code, date, field, amount) {
 }
 
 // ---------------------------------------------------------------------
-// Aide pour lire les paramètres envoyés par le casino
+// Aide pour lire les paramètres envoyés par le casino (système Fundist)
 // ---------------------------------------------------------------------
-// Le casino peut nommer ses variables différemment selon la plateforme.
-// On essaie plusieurs noms courants, dans cet ordre de priorité.
 function readCode(q) {
   return q.sub || q.subid || q.sub_id || q.s2 || q.affsub || q.aff_sub || q.click_sub || null;
 }
 function readAmount(q) {
-  const raw = q.amount ?? q.sum ?? q.value ?? q.deposit_amount ?? q.revenue ?? q.ngr ?? "0";
+  // Fundist envoie le montant dans le paramètre "payout" (deposits/CPA)
+  const raw = q.payout ?? q.amount ?? q.sum ?? q.value ?? q.deposit_amount ?? "0";
   const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+function readNgr(q) {
+  const n = Number(q.ngr ?? "0");
   return Number.isFinite(n) ? n : 0;
 }
 function checkPostbackKey(req, res) {
@@ -123,8 +126,8 @@ app.get("/postback/ngr", (req, res) => {
   if (!checkPostbackKey(req, res)) return;
   const code = readCode(req.query);
   if (!code) return res.status(400).send("paramètre sub manquant");
-  const amount = readAmount(req.query);
-  bump(code, todayStr(), "revenue", amount);
+  const ngr = readNgr(req.query);
+  bump(code, todayStr(), "revenue", ngr);
   res.send("ok");
 });
 
