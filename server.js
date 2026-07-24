@@ -205,7 +205,7 @@ app.post("/api/signup", (req, res) => {
     id: "a_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
     name, code,
     baseLinks: [{ label: "Signup", url: data.defaultBaseLink }],
-    commissionPct: data.defaultCommissionPct || 25,
+    commissionPerFtd: data.defaultCommissionPerFtd || 0,
     referredBy, status: "active",
     createdAt: new Date().toISOString().slice(0, 10),
     dailyStats: []
