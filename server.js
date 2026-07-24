@@ -21,7 +21,17 @@ const PORT = process.env.PORT || 3000;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "changeme-please";
 const POSTBACK_KEY = process.env.POSTBACK_KEY || ""; // optionnel, voir README
 
+app.use(express.json({ limit: "2mb" }));
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Content-Type, x-api-key");
+  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
 const DATA_FILE = path.join(__dirname, "data.json");
+const APP_DB_FILE = path.join(__dirname, "app-db.json");
 
 // ---------------------------------------------------------------------
 // Stockage (fichier JSON simple)
@@ -145,6 +155,65 @@ app.get("/api/stats/:code", (req, res) => {
     .map((date) => ({ date, ...byDate[date] }));
 
   res.json({ dailyStats });
+});
+
+// ---------------------------------------------------------------------
+// Stockage central des données du dashboard (affiliés, stats, réglages)
+// ---------------------------------------------------------------------
+function loadAppDB() {
+  try {
+    return JSON.parse(fs.readFileSync(APP_DB_FILE, "utf8"));
+  } catch (e) {
+    return null;
+  }
+}
+function saveAppDB(data) {
+  fs.writeFileSync(APP_DB_FILE, JSON.stringify(data));
+}
+
+// Lecture : accessible sans clé (nécessaire pour charger le dashboard
+// avant même que l'admin se soit identifié — connexion membre incluse).
+app.get("/api/db", (req, res) => {
+  const data = loadAppDB();
+  res.json({ db: data });
+});
+
+// Écriture complète : réservée à l'admin (clé API requise).
+app.post("/api/db", (req, res) => {
+  const key = req.header("x-api-key");
+  if (key !== ADMIN_API_KEY) return res.status(401).json({ error: "clé API invalide" });
+  saveAppDB(req.body);
+  res.json({ ok: true });
+});
+
+// Inscription publique via lien de parrainage : pas de clé requise,
+// seulement les infos nécessaires pour créer le compte sous-affilié.
+app.post("/api/signup", (req, res) => {
+  const data = loadAppDB();
+  if (!data) return res.status(400).json({ error: "base de données non initialisée" });
+  const { name, code, ref } = req.body || {};
+  if (!name || !code) return res.status(400).json({ error: "nom et code requis" });
+  const codeTaken = (data.affiliates || []).some(a => a.code.toLowerCase() === String(code).toLowerCase());
+  if (codeTaken) return res.status(409).json({ error: "ce code est déjà pris" });
+  if (!data.defaultBaseLink) return res.status(400).json({ error: "inscription indisponible pour le moment" });
+  let referredBy = null;
+  if (ref) {
+    const sponsor = (data.affiliates || []).find(a => a.code.toLowerCase() === String(ref).toLowerCase());
+    if (sponsor) referredBy = sponsor.id;
+  }
+  const newAff = {
+    id: "a_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+    name, code,
+    baseLinks: [{ label: "Signup", url: data.defaultBaseLink }],
+    commissionPct: data.defaultCommissionPct || 25,
+    referredBy, status: "active",
+    createdAt: new Date().toISOString().slice(0, 10),
+    dailyStats: []
+  };
+  data.affiliates = data.affiliates || [];
+  data.affiliates.unshift(newAff);
+  saveAppDB(data);
+  res.json({ ok: true, affiliate: newAff });
 });
 
 // ---------------------------------------------------------------------
