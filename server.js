@@ -14,11 +14,20 @@
 
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
+const webpush = require("web-push");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "changeme-please";
 const POSTBACK_KEY = process.env.POSTBACK_KEY || ""; // optionnel, voir README
+
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails("mailto:contact@lexoradash.app", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.warn("⚠️  VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY non définies — les notifications push seront désactivées.");
+}
 
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
   console.warn("⚠️  SUPABASE_URL / SUPABASE_SERVICE_KEY non définies — le serveur ne pourra pas stocker de données.");
@@ -194,6 +203,60 @@ app.post("/api/signup", async (req, res) => {
   data.pendingSignups.unshift(request);
   await kvSet("app-db", data);
   res.json({ ok: true, request });
+});
+
+// ---------------------------------------------------------------------
+// Notifications push (Web Push) — pour alerter les sous-affiliés même
+// quand l'appli n'est pas ouverte.
+// ---------------------------------------------------------------------
+
+// Le navigateur récupère la clé publique pour s'abonner.
+app.get("/api/vapid-public-key", (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// Enregistre l'abonnement push d'un appareil, rattaché à un affilié.
+app.post("/api/push-subscribe", async (req, res) => {
+  const { affiliateId, subscription } = req.body || {};
+  if (!affiliateId || !subscription || !subscription.endpoint) {
+    return res.status(400).json({ error: "affiliateId et subscription requis" });
+  }
+  const subs = (await kvGet("push-subscriptions")) || {};
+  subs[affiliateId] = subs[affiliateId] || [];
+  const already = subs[affiliateId].some(s => s.endpoint === subscription.endpoint);
+  if (!already) subs[affiliateId].push(subscription);
+  await kvSet("push-subscriptions", subs);
+  res.json({ ok: true });
+});
+
+// Envoie une notification push à TOUS les sous-affiliés abonnés (admin uniquement).
+app.post("/api/broadcast-push", async (req, res) => {
+  const key = req.header("x-api-key");
+  if (key !== ADMIN_API_KEY) return res.status(401).json({ error: "clé API invalide" });
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+    return res.status(400).json({ error: "notifications push non configurées sur le serveur" });
+  }
+  const { title, body } = req.body || {};
+  if (!body) return res.status(400).json({ error: "message manquant" });
+  const subs = (await kvGet("push-subscriptions")) || {};
+  const payload = JSON.stringify({ title: title || "Lexora Dash", body });
+  let sent = 0, removed = 0;
+  for (const affiliateId of Object.keys(subs)) {
+    const kept = [];
+    for (const sub of subs[affiliateId]) {
+      try {
+        await webpush.sendNotification(sub, payload);
+        sent++;
+        kept.push(sub);
+      } catch (err) {
+        // Abonnement expiré/invalide (410/404) : on ne le garde pas.
+        removed++;
+      }
+    }
+    subs[affiliateId] = kept;
+  }
+  await kvSet("push-subscriptions", subs);
+  res.json({ ok: true, sent, removed });
 });
 
 // ---------------------------------------------------------------------
